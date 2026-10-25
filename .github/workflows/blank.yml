@@ -1,0 +1,57 @@
+name: Build SM6115 + Finasu Murni
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git clang lld llvm python3 binutils-aarch64-linux-gnu binutils-arm-linux-gnueabi build-essential bc bison flex libssl-dev libelf-dev
+
+      - name: Clone Kernel Source - valeryn_xiaomi_sm6115
+        run: |
+          git clone https://github.com/Joe7500/valeryn_xiaomi_sm6115.git -b 15 --depth=1 kernel || git clone https://github.com/Joe7500/valeryn_xiaomi_sm6115.git --depth=1 kernel
+          ls arch/arm64/configs/ | grep -E "bengal|valeryn"
+
+      - name: Install Finasu Core from manipvlator/KernelSU
+        working-directory: kernel
+        run: |
+          curl -LSs "https://raw.githubusercontent.com/manipvlator/KernelSU/main/kernel/setup.sh" | bash -s main || curl -LSs "https://raw.githubusercontent.com/manipvlator/KernelSU/master/kernel/setup.sh" | bash -s master
+
+      - name: Configure + Enable KSU
+        working-directory: kernel
+        run: |
+          DEFCONFIG=$(find arch/arm64/configs -name "*bengal*perf*defconfig" | head -n 1)
+          [ -z "$DEFCONFIG" ] && DEFCONFIG=$(find arch/arm64/configs -name "*valeryn*defconfig" | head -n 1)
+          BASENAME=$(basename $DEFCONFIG)
+          make O=out ARCH=arm64 ${BASENAME}
+          ./scripts/config --file out/.config -e KSU -e KPROBES -e HAVE_KPROBES -e KALLSYMS -e KALLSYMS_ALL
+          echo "CONFIG_KSU=y" >> out/.config
+          make O=out ARCH=arm64 olddefconfig
+
+      - name: Build Kernel
+        working-directory: kernel
+        run: |
+          make O=out ARCH=arm64 -j$(nproc) CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu- Image.gz-dtb || make O=out ARCH=arm64 -j$(nproc) CC=clang CROSS_COMPILE=aarch64-linux-gnu- CROSS_COMPILE_ARM32=arm-linux-gnueabi- CLANG_TRIPLE=aarch64-linux-gnu- Image.gz
+
+      - name: Make AnyKernel3 Zip with Finasu Manager
+        run: |
+          git clone https://github.com/osm0sis/AnyKernel3.git AnyKernel3
+          cp kernel/out/arch/arm64/boot/Image.gz-dtb AnyKernel3/ 2>/dev/null || cp kernel/out/arch/arm64/boot/Image.gz AnyKernel3/
+          cd AnyKernel3
+          wget -O manager.apk https://github.com/manipvlator/KernelSU/releases/latest/download/app-release.apk || echo "skip apk"
+          sed -i 's/do.devicecheck=1/do.devicecheck=0/' anykernel.sh
+          zip -r9 ../SM6115-4.19-FINASU-MURNI.zip * -x .git README.md *placeholder
+
+      - name: Upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: SM6115-Finasu-Murni
+          path: SM6115-4.19-FINASU-MURNI.zip
